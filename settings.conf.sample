@@ -1,0 +1,8 @@
+[DEFAULT]
+ListenIp = 127.0.0.1
+ListenPort = 40000
+TempDir = /tmp/asd
+
+[virustotal.com]
+ApiKey = xxx
+#get key from virustotal.com
