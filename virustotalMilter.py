@@ -19,12 +19,16 @@ import hashlib
 from time import strftime
 import pycurl
 import json
-#import syslog
 
 #syslog.openlog('milter')
 
-class sampleMilter(Milter.Milter):
-  "Milter to replace attachments poisonous to Windows with a WARNING message."
+class virustotalMilter(Milter.Milter):
+  "Milter to check attachments hashes agains virustotal.com, via API V3"
+
+  #return values for virustotal check function
+  VT_CONTINUE = 0
+  VT_REJECT = 1
+  VT_WARNING_MSG = 2
 
   def log(self,*msg):
     print("%s [%d]" % (strftime('%Y%b%d %H:%M:%S'),self.id),end=None)
@@ -75,12 +79,11 @@ class sampleMilter(Milter.Milter):
   #@Milter.decode('bytes')
   def header(self,name,val):
     lname = name.lower()
-    if lname == 'subject':
-
+    #if lname == 'subject':
       # even if we wanted the Taiwanese spam, we can't read Chinese
       # (delete if you read chinese mail)
       #print('val=',val.encode(errors='surrogateescape'))
-      print('val=',val)
+      #print('val=',val)
       #if val.startswith(b'=?big5') or val.startswith(b'=?ISO-2022-JP'):
       #  self.log('REJECT: %s: %s' % (name,val))
 	#self.setreply('550','','Go away spammer')
@@ -135,7 +138,7 @@ class sampleMilter(Milter.Milter):
     return Milter.CONTINUE
 
   def body(self,chunk):		# copy body to temp file
-    print (  self.fp )
+    #print (  self.fp )
     if self.fp:
       self.fp.write(chunk)	# IOError causes TEMPFAIL in milter
       self.bodysize += len(chunk)
@@ -151,7 +154,6 @@ class sampleMilter(Milter.Milter):
         self.chgheader(name,i-1,'')
 
   def isFileMalicious(self, hash):
-
     header = ['x-apikey: ' + self.apiKey ]
 
     buffer = BytesIO()
@@ -173,10 +175,13 @@ class sampleMilter(Milter.Milter):
     try:
       lastAnalysisStats = (jsonData['data']['attributes']['last_analysis_stats'])
       self.log('VIRUSTOTAL lastAnalysisStats: ', lastAnalysisStats, hash)
-      if lastAnalysisStats['malicious'] > 0:
-        return True
+      if lastAnalysisStats['malicious'] > 10:
+        return virustotalMilter.VT_REJECT
+      elif lastAnalysisStats['malicius'] > 5:
+        return virustotalMilter.VT_WARNING_MSG
       else:
-        return False
+        return virustotalMilter.VT_CONTINUE
+
     except KeyError:
       self.log('VIRUSTOTAL no stats for file response data: ', jsonData)
 
@@ -188,7 +193,7 @@ class sampleMilter(Milter.Milter):
         return False
     except KeyError:
       self.log('VIRUSTOTAL unkown error: ', jsonData)
-      print(jsonData)
+      self.log(jsonData)
 
     return False
   def eom(self):
@@ -200,42 +205,27 @@ class sampleMilter(Milter.Milter):
     for part in msg.walk():
         #print ( part.get_content_type())
         ctype = part.get_content_type()
-        print (ctype)
+        # print (ctype)
         if ctype not in ['text/plain', 'multipart/mixed']:
           fileName = part.get_filename()
           if fileName != None:
-            print ("save attachment:" + fileName )
+            self.log ("save attachment:" + fileName )
             #open("/tmp/" + part.get_filename(), 'wb').write(part.get_payload(decode=True))
             hashObject = hashlib.md5(part.get_payload(decode=True))
             md5Hash =  hashObject.hexdigest()
 
-            if self.isFileMalicious(md5Hash):
+            vtRetValue = self.isFileMalicious(md5Hash)
+            if vtRetValue == virustotalMilter.VT_REJECT:
               #part.set_payload()
+              self.log("Virus mail rejected")
               return Milter.REJECT
-            #print(hashObject.hexdigest())
+
+            elif vtRetValue == virustotalMilter.VT_WARNING_MSG:
+              sub = self.getheader("Subject");
+              print (sub)
+              self.chgheader("Subject", 0, "Achtung Anhang wurde von div. Virenscannern erkannt!")
+              return Milter.ACCEPT
     return Milter.ACCEPT
-
-    if not mime.defang(msg,self.tempname):
-      #os.remove(self.tempname)
-      self.log("eom del: " + self.tempname)
-      self.tempname = None	# prevent re-removal
-
-      return Milter.ACCEPT	# no suspicious attachments
-    self.log("Temp file:",self.tempname)
-    self.tempname = None	# prevent removal of original message copy
-    # copy defanged message to a temp file
-    with tempfile.TemporaryFile() as out:
-      msg.dump(out)
-      out.seek(0)
-      msg = mime.message_from_file(out)
-      fp = BytesIO(msg.as_bytes().split(b'\n\n',1)[1])
-      while 1:
-        buf = fp.read(8192)
-        if len(buf) == 0: break
-        self.replacebody(buf)	# feed modified message to sendmail
-      return Milter.ACCEPT	# ACCEPT modified message
-
-    return Milter.TEMPFAIL
 
   def close(self):
     sys.stdout.flush()		# make log messages visible
@@ -266,7 +256,7 @@ if __name__ == "__main__":
     os.mkdir(tempDir, 755)
   Milter.apiKey = config['virustotal.com']['ApiKey']
 
-  Milter.factory = sampleMilter
+  Milter.factory = virustotalMilter
   Milter.set_flags(Milter.CHGBODY + Milter.CHGHDRS + Milter.ADDHDRS)
   print("""To use this with sendmail, add the following to sendmail.cf:
 
