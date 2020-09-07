@@ -19,6 +19,7 @@ import hashlib
 from time import strftime
 import pycurl
 import json
+import syslog
 
 #syslog.openlog('milter')
 
@@ -155,14 +156,20 @@ class virustotalMilter(Milter.Milter):
 
   def isFileMalicious(self, hash):
     header = ['x-apikey: ' + self.apiKey ]
+    url = Milter.apiUrl
+    try:
+      buffer = BytesIO()
+      c = pycurl.Curl()
+      c.setopt(pycurl.HTTPHEADER, header)
+      c.setopt(c.URL, url + hash)
+      c.setopt(c.WRITEDATA, buffer)
+      c.perform()
+      c.close()
+    except pycurl.error as exc:
+      syslog.syslog(syslog.LOG_ERR, "pycurl Curl Error %s (%s) " % (url, exc) )
 
-    buffer = BytesIO()
-    c = pycurl.Curl()
-    c.setopt(pycurl.HTTPHEADER, header)
-    c.setopt(c.URL, 'https://www.virustotal.com/api/v3/files/' + hash)
-    c.setopt(c.WRITEDATA, buffer)
-    c.perform()
-    c.close()
+      ValueError("Unable to reach %s (%s)" )
+      return self.VT_CONTINUE
 
     body = buffer.getvalue()
     # Body is a byte string.
@@ -255,6 +262,7 @@ if __name__ == "__main__":
   if not os.path.exists(tempDir):
     os.mkdir(tempDir, 755)
   Milter.apiKey = config['virustotal.com']['ApiKey']
+  Milter.apiUrl = config['virustotal.com']['ApiUrl']
 
   Milter.factory = virustotalMilter
   Milter.set_flags(Milter.CHGBODY + Milter.CHGHDRS + Milter.ADDHDRS)

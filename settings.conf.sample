@@ -5,4 +5,5 @@ TempDir = /tmp/asd
 
 [virustotal.com]
 ApiKey = xxx
+ApiUrl = https://www.virustotal.com/api/v3/files/
 #get key from virustotal.com
